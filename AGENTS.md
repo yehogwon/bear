@@ -1,11 +1,28 @@
 # AGENTS
+This file is for agentic coding agents working in this repository.
 
-## Architecture summary
+## Repo snapshot
+- Project: `bear`
+- Language: Python 3.12+
+- Package manager: `uv`
+- Web stack: FastAPI + Pydantic v2
+- Packaging: Hatchling
+- Persistence: markdown-backed state under `.bear/state/`
+- Package layout: `src/bear/`
+- Tests: pytest
+- Lint/format: Ruff
+- Type checking: basedpyright in the dev group
 
-The scaffold separates typed domain state from orchestration logic, markdown-backed local persistence, tool policy, provider adapters, execution backends, and human-facing channels. A small runtime service coordinates the research loop while keeping actions inspectable, permission-aware, and backend-agnostic.
+Keep the `src/bear/` layout. It is the better default here because the project is packaged and tested as a real Python distribution, and the `src/` layout avoids accidental imports from the repo root.
+
+## Rule discovery
+- No `.cursor/rules/` directory was found.
+- No `.cursorrules` file was found.
+- No `.github/copilot-instructions.md` file was found.
+
+There are no additional Cursor or Copilot rule files to merge into this guidance.
 
 ## Directory structure
-
 ```text
 src/bear/
   backends/          Execution target adapters
@@ -19,58 +36,124 @@ src/bear/
   storage/           Markdown-backed local persistence
   tools/             Tool registry and audit metadata
   web/               FastAPI app and local control plane entrypoint
-tests/               Core and API tests
-.github/             CI and collaboration templates
+tests/               API and service tests
+.github/             CI and issue / PR templates
 ```
 
-## Developer workflow with `uv`
+## Build, lint, test, and run commands
+Run commands from the repository root.
 
+### Install dependencies
 ```bash
 uv sync
+```
+
+### Lint
+```bash
 uv run ruff check .
+```
+
+### Format
+```bash
 uv run ruff format .
+```
+
+### Full test suite
+```bash
 uv run pytest
 ```
 
-## Commit convention
+### Single test file
+```bash
+uv run pytest tests/test_service.py
+```
 
-Use Conventional Commits for commit messages in this repository, such as `feat: add local execution backend` or `fix: handle missing plan ids`.
+### Single test by node id
+```bash
+uv run pytest tests/test_service.py::test_vertical_slice_persists_entities
+```
 
-## Branch workflow
+### Test selection by keyword
+```bash
+uv run pytest -k approval
+```
 
-Do not push directly to `main`. Create another branch, open a pull request, and merge through the PR flow.
+### Build distributions
+```bash
+uv build
+```
 
-## Run the demo flow
-
+### Run the demo flow
 ```bash
 uv run bear-demo
 ```
 
-That command creates a project, idea, hypothesis, plan, dry-run execution, result summary, artifacts, and suggested next step in the local markdown state store.
-
-## Run the local webserver
-
+### Run the local web app
 ```bash
 uv run bear-web
 ```
 
-Then open `http://127.0.0.1:8000`.
+## Testing notes
+- Tests live under `tests/`.
+- `pythonpath = ["src"]`.
+- pytest uses `--import-mode=importlib`.
+- Existing test patterns are in `tests/test_api.py`, `tests/test_service.py`, and `tests/test_policy_and_registry.py`.
 
-## Current vertical slice
+## Code style guidelines
+### Imports
+- Use top-of-file imports only.
+- Group imports in Ruff-compatible order: standard library, third-party, then local imports.
+- Prefer explicit imports over wildcard imports.
 
-The first slice includes:
+### Formatting
+- Ruff is the formatter.
+- Line length is 100.
+- Quote style is single quotes.
 
-- project creation
-- research idea and hypothesis creation
-- experiment plan and code task generation
-- approval-gated execution requests for non-dry-run runs
-- dry-run backend execution through a local backend adapter
-- result collection, artifact persistence, and lightweight analysis
-- global knowledge nodes and cross-project links
-- autopilot and semi-autopilot session start and pause controls
-- local web UI and JSON API for inspection and actions
-- tool registry and explicit `allow` / `request` / `disallow` policy model
+### Types
+- Use type hints throughout.
+- Prefer concrete return types on public functions and service methods.
+- Use Pydantic models for structured state and request/response payloads.
+- Follow existing aliases like `JsonDict = dict[str, object]` where useful.
+- Do not suppress type errors with casts or ignores unless absolutely necessary.
 
-## What remains for later phases
+### Naming
+- Modules and functions: `snake_case`
+- Classes and enums: `PascalCase`
+- Request payload models: explicit names like `ProjectCreateRequest`
+- IDs use prefixes like `proj_`, `idea_`, and `plan_`
 
-The scaffold leaves real model providers, coding-agent executors, richer Discord behavior, and scheduler-aware resource management as clean extension points rather than pretending they already exist.
+### State and persistence
+- Shared domain state lives in `src/bear/domain/models.py`.
+- Shared enums live in `src/bear/domain/enums.py`.
+- Persist state through `MarkdownRepository` in `src/bear/storage/markdown.py`.
+- Keep state inspectable and serializable.
+
+### Service and API conventions
+- Keep business logic in `BearService` in `src/bear/runtime/service.py`.
+- Keep FastAPI route handlers thin in `src/bear/web/app.py`.
+- Return JSON-ready payloads with `model_dump(mode='json')`.
+
+### Error handling
+- Raise explicit exceptions for invalid state or missing records.
+- Existing code uses `KeyError` for missing records and `PermissionError` for policy violations.
+- Do not silently swallow errors or add empty `except` blocks.
+
+## Practical editing guidance
+- Prefer minimal, local diffs.
+- Match existing style before introducing new abstractions.
+- Extend existing modules before creating new ones when the behavior clearly belongs there.
+- Add tests for new behavior or API changes.
+- If you change commands or workflow, update both `AGENTS.md` and `CONTRIBUTING.md`.
+
+## Git and review workflow
+- Use Conventional Commits.
+- Do not push directly to `main`.
+- Create a branch, open a PR, and merge through the PR flow.
+
+## Before finishing a change
+- Docs-only change: re-read edited files for consistency.
+- Python change: run `uv run ruff check .`.
+- Behavior change: run targeted pytest or the full suite.
+- Packaging or command change: run `uv build`.
+- Web/API change: run relevant API tests and, when practical, exercise the flow manually.
