@@ -17,6 +17,7 @@ The current implementation includes:
 - markdown-backed local state
 - dry-run and approval-gated execution flow
 - a small test suite
+- API surfaces for approvals, artifacts, knowledge links, sessions, and tool-call inspection
 
 ## Quick start
 
@@ -39,6 +40,27 @@ uv run bear-web
 ```
 
 Then open `http://127.0.0.1:8000`.
+
+## API surface snapshot
+
+The current FastAPI app exposes:
+
+- `GET /`
+- `GET /api/state`
+- `POST /api/projects`
+- `POST /api/projects/{project_id}/ideas`
+- `POST /api/projects/{project_id}/hypotheses`
+- `POST /api/projects/{project_id}/plans`
+- `POST /api/plans/{plan_id}/request-execution`
+- `POST /api/plans/{plan_id}/run`
+- `POST /api/approvals/{approval_id}/approve`
+- `GET /api/approvals`
+- `GET /api/knowledge`
+- `POST /api/knowledge/links`
+- `GET /api/artifacts`
+- `POST /api/sessions`
+- `POST /api/sessions/{session_id}/pause`
+- `GET /api/tool-calls`
 
 ## Where to look next
 

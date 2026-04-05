@@ -86,8 +86,27 @@ Example commit messages:
 ## Documentation
 
 - `AGENTS.md` is for agentic coding agents and repo-operating guidance.
-- `README.md` should stay concise and high-level.
-- Update docs when commands, workflow, or project shape change.
+- `README.md` should stay concise and high-level, but it should still reflect the implemented API surface.
+- Update docs when commands, workflow, project shape, or exposed routes change.
+
+Current API routes worth keeping in sync with the docs:
+
+- `GET /`
+- `GET /api/state`
+- `GET /api/approvals`
+- `GET /api/knowledge`
+- `GET /api/artifacts`
+- `GET /api/tool-calls`
+- `POST /api/projects`
+- `POST /api/projects/{project_id}/ideas`
+- `POST /api/projects/{project_id}/hypotheses`
+- `POST /api/projects/{project_id}/plans`
+- `POST /api/plans/{plan_id}/request-execution`
+- `POST /api/plans/{plan_id}/run`
+- `POST /api/approvals/{approval_id}/approve`
+- `POST /api/knowledge/links`
+- `POST /api/sessions`
+- `POST /api/sessions/{session_id}/pause`
 
 ## Before opening a PR
 

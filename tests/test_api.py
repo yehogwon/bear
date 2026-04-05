@@ -7,9 +7,13 @@ from bear.runtime.service import build_service
 from bear.web.app import create_app
 
 
-def test_api_vertical_slice(tmp_path: Path) -> None:
+def build_client(tmp_path: Path) -> TestClient:
     service = build_service(Settings(state_root=tmp_path / 'state'))
-    client = TestClient(create_app(service))
+    return TestClient(create_app(service))
+
+
+def test_api_vertical_slice(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
 
     project = client.post(
         '/api/projects',
@@ -52,8 +56,7 @@ def test_api_vertical_slice(tmp_path: Path) -> None:
 
 
 def test_api_requires_approval_for_non_dry_run(tmp_path: Path) -> None:
-    service = build_service(Settings(state_root=tmp_path / 'state'))
-    client = TestClient(create_app(service))
+    client = build_client(tmp_path)
 
     project = client.post(
         '/api/projects',
@@ -87,3 +90,68 @@ def test_api_requires_approval_for_non_dry_run(tmp_path: Path) -> None:
     assert approval_response['allowed'] is False
     assert approved['status'] == 'approved'
     assert run['execution']['status'] == 'running'
+
+
+def test_index_route_returns_control_plane_html(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    response = client.get('/')
+
+    assert response.status_code == 200
+    assert 'text/html' in response.headers['content-type']
+    assert 'bear control plane' in response.text
+    assert 'GET /api/knowledge' in response.text
+    assert 'POST /api/knowledge/links' in response.text
+    assert 'GET /api/tool-calls' in response.text
+
+
+def test_api_approvals_and_tool_calls_routes_return_lists(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    approvals_response = client.get('/api/approvals')
+    tool_calls_response = client.get('/api/tool-calls')
+
+    assert approvals_response.status_code == 200
+    assert approvals_response.json() == []
+    assert tool_calls_response.status_code == 200
+    assert tool_calls_response.json() == []
+
+
+def test_api_can_create_knowledge_links(tmp_path: Path) -> None:
+    client = build_client(tmp_path)
+
+    project_a = client.post(
+        '/api/projects',
+        json={'name': 'Project A', 'description': 'desc', 'tags': ['demo']},
+    ).json()
+    idea_a = client.post(
+        f'/api/projects/{project_a["id"]}/ideas',
+        json={'title': 'Idea A', 'problem_statement': 'Problem', 'motivation': 'Why'},
+    ).json()
+    project_b = client.post(
+        '/api/projects',
+        json={'name': 'Project B', 'description': 'desc', 'tags': ['demo']},
+    ).json()
+    idea_b = client.post(
+        f'/api/projects/{project_b["id"]}/ideas',
+        json={'title': 'Idea B', 'problem_statement': 'Problem', 'motivation': 'Why'},
+    ).json()
+
+    before = client.get('/api/knowledge').json()
+    response = client.post(
+        '/api/knowledge/links',
+        json={
+            'source_node_id': idea_a['id'],
+            'target_node_id': idea_b['id'],
+            'relationship': 'supports',
+            'rationale': 'The ideas share evidence.',
+        },
+    )
+    after = client.get('/api/knowledge').json()
+
+    assert response.status_code == 200
+    assert response.json()['source_node_id'] == idea_a['id']
+    assert response.json()['target_node_id'] == idea_b['id']
+    assert response.json()['relationship'] == 'supports'
+    assert len(before['links']) == 0
+    assert after['links'] == [response.json()]
