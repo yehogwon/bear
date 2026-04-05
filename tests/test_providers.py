@@ -256,18 +256,9 @@ def test_provider_factories_build_expected_backends() -> None:
     assert isinstance(coding_backend, OpenCodeBackend)
 
 
-@pytest.mark.parametrize(
-    ('settings', 'expected_message'),
-    [
-        (Settings(llm_provider='unsupported'), 'Unsupported LLM provider'),
-        (Settings(coding_agent_provider='unsupported'), 'Unsupported coding-agent provider'),
-    ],
-)
-def test_provider_factories_reject_unsupported_providers(
-    settings: Settings, expected_message: str
-) -> None:
-    with pytest.raises(ValueError, match=expected_message):
-        if 'LLM' in expected_message:
-            build_llm_backend(settings)
-        else:
-            build_coding_agent_backend(settings)
+def test_settings_reject_unsupported_provider_names() -> None:
+    with pytest.raises(ValueError, match='llm_provider'):
+        Settings(llm_provider='unsupported')
+
+    with pytest.raises(ValueError, match='coding_agent_provider'):
+        Settings(coding_agent_provider='unsupported')
