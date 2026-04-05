@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from bear.backends.local import LocalExecutionBackend
 from bear.config.settings import Settings
+from bear.core.interfaces import CodingAgentBackend, LLMBackend
 from bear.domain.enums import ApprovalStatus, PermissionLevel, RiskLevel
 from bear.domain.models import (
     AgentSession,
@@ -22,6 +23,7 @@ from bear.domain.models import (
     ToolCall,
 )
 from bear.policy.permissions import PermissionPolicy
+from bear.providers.factory import build_coding_agent_backend, build_llm_backend
 from bear.storage.markdown import MarkdownRepository
 from bear.tools.registry import ToolRegistry, build_default_registry
 
@@ -34,6 +36,8 @@ class BearService:
     tool_registry: ToolRegistry
     permission_policy: PermissionPolicy
     execution_backend: LocalExecutionBackend
+    llm_backend: LLMBackend
+    coding_agent_backend: CodingAgentBackend
 
     def create_project(self, name: str, description: str, tags: list[str] | None = None) -> Project:
         project = Project(name=name, description=description, tags=tags or [])
@@ -82,13 +86,25 @@ class BearService:
     def plan_experiment(
         self, project_id: str, hypothesis_id: str, title: str, objective: str
     ) -> ExperimentPlan:
+        planning_brief = self.llm_backend.generate_text(
+            self._build_planning_prompt(title=title, objective=objective)
+        )
+        patch_plan = self.coding_agent_backend.create_patch_plan(
+            self._build_patch_objective(title=title, objective=objective)
+        )
         code_task = CodeTask(
             project_id=project_id,
             title='Create experiment scaffold',
-            description='Add the smallest code change necessary to validate the hypothesis.',
+            description=(
+                'Add the smallest code change necessary to validate the hypothesis.\n\n'
+                f'LLM planning brief ({self.llm_backend.provider_name}): {planning_brief}\n\n'
+                f'Coding agent patch plan ({self.coding_agent_backend.provider_name}): '
+                f'{patch_plan}'
+            ),
             acceptance_criteria=[
                 'The experiment can be launched in dry-run mode.',
                 'A measurable success signal is captured in the result summary.',
+                'Provider planning guidance is preserved in the task description.',
             ],
         )
         plan = ExperimentPlan(
@@ -101,6 +117,22 @@ class BearService:
             dry_run=True,
         )
         self.repository.save('plans', plan.id, plan.model_dump(mode='json'))
+        planning_note = KnowledgeNode(
+            title=f'{title} planning brief',
+            summary=(
+                f'{planning_brief}\n\nPatch plan source: {self.coding_agent_backend.provider_name}'
+            ),
+            project_ids=[project_id],
+            tags=[
+                'plan',
+                'provider-guidance',
+                self.llm_backend.provider_name,
+                self.coding_agent_backend.provider_name,
+            ],
+        )
+        self.repository.save(
+            'knowledge_nodes', planning_note.id, planning_note.model_dump(mode='json')
+        )
         return plan
 
     def request_plan_execution(self, plan_id: str, dry_run: bool = False) -> ApprovalRequest | None:
@@ -158,6 +190,14 @@ class BearService:
         execution = self.execution_backend.submit(plan, dry_run=dry_run)
         self.repository.save('executions', execution.id, execution.model_dump(mode='json'))
         artifacts = self._persist_artifacts(execution)
+        analysis = self.llm_backend.generate_text(
+            self._build_result_prompt(
+                plan=plan, execution=execution, artifacts=artifacts, dry_run=dry_run
+            )
+        )
+        next_step = self.coding_agent_backend.create_patch_plan(
+            self._build_next_step_objective(plan=plan, dry_run=dry_run)
+        )
         result = ResultSummary(
             project_id=plan.project_id,
             execution_id=execution.id,
@@ -165,18 +205,8 @@ class BearService:
             if dry_run
             else 'execution submitted successfully',
             metrics={'confidence': 0.6, 'latency_seconds': 0.1 if dry_run else 0.0},
-            analysis=(
-                'The dry-run backend validated the plan shape and produced an execution '
-                'record without '
-                'consuming external compute.'
-                if dry_run
-                else 'The execution backend accepted the plan and returned a tracked run record.'
-            ),
-            suggested_next_step=(
-                'Promote the plan to a real backend after adding repository patch generation.'
-                if dry_run
-                else 'Poll the run and collect artifacts once execution completes.'
-            ),
+            analysis=analysis,
+            suggested_next_step=next_step,
         )
         self.repository.save('results', result.id, result.model_dump(mode='json'))
         insight = Insight(
@@ -193,6 +223,8 @@ class BearService:
             tags=[
                 'result',
                 'dry-run' if dry_run else 'execution',
+                self.llm_backend.provider_name,
+                self.coding_agent_backend.provider_name,
                 *[artifact.kind for artifact in artifacts],
             ],
         )
@@ -326,8 +358,71 @@ class BearService:
             self.repository.save('artifacts', artifact.id, artifact.model_dump(mode='json'))
         return artifacts
 
+    def _build_planning_prompt(self, *, title: str, objective: str) -> str:
+        return '\n'.join(
+            [
+                'Summarize the smallest experiment plan that can validate the objective.',
+                f'Plan title: {title}',
+                f'Objective: {objective}',
+                'Return plain text that names the success signal, a key risk, '
+                'and the next verification step.',
+            ]
+        )
 
-def build_service(settings: Settings | None = None) -> BearService:
+    def _build_patch_objective(self, *, title: str, objective: str) -> str:
+        return '\n'.join(
+            [
+                f'Plan title: {title}',
+                f'Objective: {objective}',
+                'Generate a minimal patch plan that makes the experiment runnable '
+                'in dry-run mode and keeps provider wiring covered by tests.',
+            ]
+        )
+
+    def _build_result_prompt(
+        self,
+        *,
+        plan: ExperimentPlan,
+        execution: ExperimentExecution,
+        artifacts: list[Artifact],
+        dry_run: bool,
+    ) -> str:
+        artifact_paths = ', '.join(artifact.path for artifact in artifacts) or 'none'
+        return '\n'.join(
+            [
+                'Summarize the execution result in plain text.',
+                f'Plan title: {plan.title}',
+                f'Objective: {plan.objective}',
+                f'Execution status: {execution.status}',
+                f'Dry run: {dry_run}',
+                f'Artifacts: {artifact_paths}',
+                'Include the current evidence and the most important follow-up concern.',
+            ]
+        )
+
+    def _build_next_step_objective(self, *, plan: ExperimentPlan, dry_run: bool) -> str:
+        if dry_run:
+            return '\n'.join(
+                [
+                    f'Objective: promote the dry-run plan "{plan.title}" toward real execution.',
+                    'Outline the smallest implementation and verification steps needed next.',
+                ]
+            )
+        return '\n'.join(
+            [
+                f'Objective: follow up on the submitted execution for "{plan.title}".',
+                'Outline the smallest steps to collect logs, inspect artifacts, '
+                'and decide on the next patch.',
+            ]
+        )
+
+
+def build_service(
+    settings: Settings | None = None,
+    *,
+    llm_backend: LLMBackend | None = None,
+    coding_agent_backend: CodingAgentBackend | None = None,
+) -> BearService:
     settings = settings or Settings()
     repository = MarkdownRepository(settings.state_root)
     return BearService(
@@ -338,4 +433,6 @@ def build_service(settings: Settings | None = None) -> BearService:
             context_overrides=settings.context_permissions,
         ),
         execution_backend=LocalExecutionBackend(),
+        llm_backend=llm_backend or build_llm_backend(settings),
+        coding_agent_backend=coding_agent_backend or build_coding_agent_backend(settings),
     )

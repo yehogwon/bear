@@ -76,3 +76,27 @@ def test_disallow_permission_blocks_request_and_execution(tmp_path: Path) -> Non
         pass
     else:
         raise AssertionError('expected PermissionError for disallowed execution')
+
+
+def test_provider_wiring_uses_selected_backends(tmp_path: Path) -> None:
+    service = build_service(
+        Settings(
+            state_root=tmp_path / 'state',
+            llm_provider='claude_api',
+            coding_agent_provider='claude_code',
+        )
+    )
+
+    project = service.create_project('Project D', 'Research project')
+    idea = service.create_idea(project.id, 'Idea', 'Problem', 'Motivation')
+    hypothesis = service.create_hypothesis(project.id, idea.id, 'Statement', 'Rationale', 'Signal')
+    plan = service.plan_experiment(project.id, hypothesis.id, 'Provider Plan', 'Wire providers')
+    execution, result = service.run_plan(plan.id)
+
+    assert service.llm_backend.provider_name == 'claude_api'
+    assert service.coding_agent_backend.provider_name == 'claude_code'
+    assert 'LLM planning brief (claude_api):' in plan.code_tasks[0].description
+    assert 'Coding agent patch plan (claude_code):' in plan.code_tasks[0].description
+    assert result.analysis.startswith('claude_api offline synthesis:')
+    assert result.suggested_next_step.startswith('claude_code offline patch plan:')
+    assert execution.plan_id == plan.id
