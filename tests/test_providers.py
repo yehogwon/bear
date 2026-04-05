@@ -2,8 +2,11 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from bear.config.settings import Settings
 from bear.providers.coding_agents.base import ClaudeCodeBackend, CodexBackend, OpenCodeBackend
+from bear.providers.factory import build_coding_agent_backend, build_llm_backend
 from bear.providers.llm.base import ClaudeAPIBackend, OpenAIAPIBackend
 
 
@@ -243,3 +246,19 @@ def test_opencode_backend_uses_custom_openai_compatible_base_url() -> None:
         ),
         'input': 'Use a local OpenAI-compatible planner.',
     }
+
+
+def test_provider_factories_build_expected_backends() -> None:
+    llm_backend = build_llm_backend(Settings(llm_provider='claude_api'))
+    coding_backend = build_coding_agent_backend(Settings(coding_agent_provider='opencode'))
+
+    assert isinstance(llm_backend, ClaudeAPIBackend)
+    assert isinstance(coding_backend, OpenCodeBackend)
+
+
+def test_settings_reject_unsupported_provider_names() -> None:
+    with pytest.raises(ValueError, match='llm_provider'):
+        Settings(llm_provider='unsupported')
+
+    with pytest.raises(ValueError, match='coding_agent_provider'):
+        Settings(coding_agent_provider='unsupported')

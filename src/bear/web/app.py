@@ -74,6 +74,10 @@ def create_app(service: BearService | None = None) -> FastAPI:
               <li>POST /api/sessions</li>
               <li>POST /api/sessions/{session_id}/pause</li>
               <li>GET /api/knowledge</li>
+              <li>POST /api/knowledge/links</li>
+              <li>GET /api/artifacts</li>
+              <li>GET /api/tool-calls</li>
+              <li>GET /api/approvals</li>
               <li>GET /api/state</li>
             </ul>
           </body>
