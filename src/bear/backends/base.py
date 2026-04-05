@@ -7,7 +7,11 @@ from bear.domain.models import BackendTarget, ExperimentExecution, ExperimentPla
 
 
 class BaseExecutionBackend:
-    def __init__(self, target: BackendTarget, artifact_root: str | Path = '.bear/artifacts') -> None:
+    def __init__(
+        self,
+        target: BackendTarget,
+        artifact_root: str | Path = '.bear/artifacts',
+    ) -> None:
         self.target = target
         self.artifact_root = Path(artifact_root)
 
@@ -44,8 +48,11 @@ class BaseExecutionBackend:
         execution_dir.mkdir(parents=True, exist_ok=True)
         artifact_path = execution_dir / 'summary.json'
         artifact_path.write_text(
-            '{"execution_id": "%s", "target": "%s", "status": "%s"}\n'
-            % (execution.id, execution.target.name, execution.status),
+            (
+                f'{{"execution_id": "{execution.id}", '
+                f'"target": "{execution.target.name}", '
+                f'"status": "{execution.status}"}}\n'
+            ),
             encoding='utf-8',
         )
         return [{'kind': 'report', 'path': str(artifact_path)}]
