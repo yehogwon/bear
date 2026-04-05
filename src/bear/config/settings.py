@@ -5,17 +5,19 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from bear.domain.enums import PermissionLevel
 
 LLMProviderName = Literal['openai_api', 'openai_oauth', 'claude_api']
 CodingAgentProviderName = Literal['codex', 'claude_code', 'opencode']
+ExecutionBackendName = Literal['local', 'local_cuda', 'slurm', 'kubeflow']
 
 
 class Settings(BaseModel):
     state_root: Path = Path('.bear/state')
     artifact_root: Path = Path('.bear/artifacts')
+    execution_backend: ExecutionBackendName = 'local'
     host: str = '127.0.0.1'
     port: int = 8000
     default_permissions: dict[str, PermissionLevel] = Field(
@@ -49,6 +51,13 @@ class Settings(BaseModel):
     coding_agent_base_url: str | None = None
     coding_agent_timeout_seconds: float = 30.0
     coding_agent_offline_fallback: bool = True
+
+    @model_validator(mode='after')
+    def expand_paths(self) -> 'Settings':
+        self.state_root = self.state_root.expanduser()
+        self.artifact_root = self.artifact_root.expanduser()
+        self.openai_oauth_auth_file = self.openai_oauth_auth_file.expanduser()
+        return self
 
     def resolve_llm_api_key(self) -> str | None:
         if self.llm_api_key is not None:

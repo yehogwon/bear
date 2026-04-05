@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bear.domain.enums import ExperimentStatus
 from bear.domain.models import BackendTarget, ExperimentExecution, ExperimentPlan
 
 
 class BaseExecutionBackend:
-    def __init__(self, target: BackendTarget) -> None:
+    def __init__(self, target: BackendTarget, artifact_root: str | Path = '.bear/artifacts') -> None:
         self.target = target
+        self.artifact_root = Path(artifact_root)
 
     def capability_summary(self) -> dict[str, object]:
         return self.target.model_dump()
@@ -37,7 +40,15 @@ class BaseExecutionBackend:
         return execution.logs
 
     def fetch_artifacts(self, execution: ExperimentExecution) -> list[dict[str, object]]:
-        return [{'kind': 'report', 'path': f'artifacts/{execution.id}/summary.json'}]
+        execution_dir = self.artifact_root / execution.id
+        execution_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = execution_dir / 'summary.json'
+        artifact_path.write_text(
+            '{"execution_id": "%s", "target": "%s", "status": "%s"}\n'
+            % (execution.id, execution.target.name, execution.status),
+            encoding='utf-8',
+        )
+        return [{'kind': 'report', 'path': str(artifact_path)}]
 
     def cancel(self, execution: ExperimentExecution) -> ExperimentExecution:
         execution.status = ExperimentStatus.CANCELLED

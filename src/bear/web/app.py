@@ -39,6 +39,14 @@ class ExecutionRequest(BaseModel):
     dry_run: bool = True
 
 
+class ExecutionControlResponse(BaseModel):
+    execution: JsonDict
+
+
+class ExecutionLogsResponse(BaseModel):
+    logs: list[str]
+
+
 class AgentSessionCreateRequest(BaseModel):
     mode: str
     objective: str
@@ -71,6 +79,10 @@ def create_app(service: BearService | None = None) -> FastAPI:
               <li>POST /api/projects/{project_id}/plans</li>
               <li>POST /api/plans/{plan_id}/request-execution</li>
               <li>POST /api/plans/{plan_id}/run</li>
+              <li>GET /api/executions/{execution_id}</li>
+              <li>POST /api/executions/{execution_id}/poll</li>
+              <li>GET /api/executions/{execution_id}/logs</li>
+              <li>POST /api/executions/{execution_id}/cancel</li>
               <li>POST /api/sessions</li>
               <li>POST /api/sessions/{session_id}/pause</li>
               <li>GET /api/knowledge</li>
@@ -136,6 +148,24 @@ def create_app(service: BearService | None = None) -> FastAPI:
             'execution': execution.model_dump(mode='json'),
             'result': result.model_dump(mode='json'),
         }
+
+    @app.get('/api/executions/{execution_id}')
+    def get_execution(execution_id: str) -> JsonDict:
+        return active_service.get_execution(execution_id).model_dump(mode='json')
+
+    @app.post('/api/executions/{execution_id}/poll')
+    def poll_execution(execution_id: str) -> ExecutionControlResponse:
+        execution = active_service.poll_execution_status(execution_id)
+        return {'execution': execution.model_dump(mode='json')}
+
+    @app.get('/api/executions/{execution_id}/logs')
+    def execution_logs(execution_id: str) -> ExecutionLogsResponse:
+        return {'logs': active_service.fetch_execution_logs(execution_id)}
+
+    @app.post('/api/executions/{execution_id}/cancel')
+    def cancel_execution(execution_id: str) -> ExecutionControlResponse:
+        execution = active_service.cancel_execution(execution_id)
+        return {'execution': execution.model_dump(mode='json')}
 
     @app.post('/api/approvals/{approval_id}/approve')
     def approve(approval_id: str) -> JsonDict:
