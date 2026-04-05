@@ -155,3 +155,55 @@ def test_api_can_create_knowledge_links(tmp_path: Path) -> None:
     assert response.json()['relationship'] == 'supports'
     assert len(before['links']) == 0
     assert after['links'] == [response.json()]
+
+
+
+def test_api_exposes_execution_lifecycle_routes(tmp_path: Path) -> None:
+    service = build_service(
+        Settings(
+            state_root=tmp_path / 'state',
+            artifact_root=tmp_path / 'artifacts',
+            execution_backend='local_cuda',
+        )
+    )
+    client = TestClient(create_app(service))
+
+    project = client.post(
+        '/api/projects',
+        json={'name': 'Project C', 'description': 'desc', 'tags': ['demo']},
+    ).json()
+    idea = client.post(
+        f'/api/projects/{project["id"]}/ideas',
+        json={'title': 'Idea', 'problem_statement': 'Problem', 'motivation': 'Why'},
+    ).json()
+    hypothesis = client.post(
+        f'/api/projects/{project["id"]}/hypotheses',
+        json={
+            'idea_id': idea['id'],
+            'statement': 'Hypothesis',
+            'rationale': 'Because',
+            'success_signal': 'Signal',
+        },
+    ).json()
+    plan = client.post(
+        f'/api/projects/{project["id"]}/plans',
+        json={'hypothesis_id': hypothesis['id'], 'title': 'Plan', 'objective': 'Validate flow'},
+    ).json()
+    approval = client.post(
+        f'/api/plans/{plan["id"]}/request-execution',
+        json={'dry_run': False},
+    ).json()
+    _ = client.post(f'/api/approvals/{approval["approval"]["id"]}/approve').json()
+    run = client.post(f'/api/plans/{plan["id"]}/run', json={'dry_run': False}).json()
+    execution_id = run['execution']['id']
+
+    fetched = client.get(f'/api/executions/{execution_id}').json()
+    polled = client.post(f'/api/executions/{execution_id}/poll').json()
+    logs = client.get(f'/api/executions/{execution_id}/logs').json()
+    cancelled = client.post(f'/api/executions/{execution_id}/cancel').json()
+
+    assert fetched['id'] == execution_id
+    assert fetched['target']['kind'] == 'local_cuda'
+    assert polled['execution']['id'] == execution_id
+    assert logs['logs'][-1] == 'execution submitted'
+    assert cancelled['execution']['status'] == 'cancelled'

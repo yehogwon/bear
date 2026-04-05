@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-from bear.backends.local import LocalExecutionBackend
+from bear.backends.local import LocalCUDAExecutionBackend, LocalExecutionBackend
+from bear.backends.remote import KubeflowExecutionBackend, SlurmExecutionBackend
 from bear.config.settings import Settings
-from bear.core.interfaces import CodingAgentBackend, LLMBackend
+from bear.core.interfaces import CodingAgentBackend, ExecutionBackend, LLMBackend
 from bear.domain.enums import ApprovalStatus, PermissionLevel, RiskLevel
 from bear.domain.models import (
     AgentSession,
@@ -35,7 +37,7 @@ class BearService:
     repository: MarkdownRepository
     tool_registry: ToolRegistry
     permission_policy: PermissionPolicy
-    execution_backend: LocalExecutionBackend
+    execution_backend: ExecutionBackend
     llm_backend: LLMBackend
     coding_agent_backend: CodingAgentBackend
 
@@ -277,6 +279,28 @@ class BearService:
         ]
         return {namespace: self.repository.list(namespace) for namespace in namespaces}
 
+    def get_execution(self, execution_id: str) -> ExperimentExecution:
+        payload = self.repository.get('executions', execution_id)
+        if payload is None:
+            raise KeyError(f'Unknown execution: {execution_id}')
+        return ExperimentExecution.model_validate(payload)
+
+    def poll_execution_status(self, execution_id: str) -> ExperimentExecution:
+        execution = self.get_execution(execution_id)
+        updated = self.execution_backend.poll_status(execution)
+        self.repository.save('executions', updated.id, updated.model_dump(mode='json'))
+        return updated
+
+    def fetch_execution_logs(self, execution_id: str) -> list[str]:
+        execution = self.get_execution(execution_id)
+        return self.execution_backend.fetch_logs(execution)
+
+    def cancel_execution(self, execution_id: str) -> ExperimentExecution:
+        execution = self.get_execution(execution_id)
+        updated = self.execution_backend.cancel(execution)
+        self.repository.save('executions', updated.id, updated.model_dump(mode='json'))
+        return updated
+
     def list_knowledge_nodes(self) -> list[KnowledgeNode]:
         payloads = self.repository.list('knowledge_nodes')
         return [KnowledgeNode.model_validate(payload) for payload in payloads]
@@ -345,13 +369,19 @@ class BearService:
             kind = artifact_payload.get('kind')
             if not isinstance(path, str) or not isinstance(kind, str):
                 continue
+            artifact_path = Path(path)
+            metadata = {'target': execution.target.name}
+            if artifact_path.is_relative_to(self.repository.state_root.parent):
+                metadata['storage'] = 'workspace-relative'
+            else:
+                metadata['storage'] = 'absolute'
             artifacts.append(
                 Artifact(
                     project_id=execution.project_id,
                     execution_id=execution.id,
-                    path=path,
+                    path=str(artifact_path),
                     kind=kind,
-                    metadata={'target': execution.target.name},
+                    metadata=metadata,
                 )
             )
         for artifact in artifacts:
@@ -417,11 +447,26 @@ class BearService:
         )
 
 
+def build_execution_backend(settings: Settings) -> ExecutionBackend:
+    artifact_root = settings.artifact_root
+    if settings.execution_backend == 'local':
+        return LocalExecutionBackend(artifact_root=artifact_root)
+    if settings.execution_backend == 'local_cuda':
+        return LocalCUDAExecutionBackend(artifact_root=artifact_root)
+    if settings.execution_backend == 'slurm':
+        return SlurmExecutionBackend(artifact_root=artifact_root)
+    if settings.execution_backend == 'kubeflow':
+        return KubeflowExecutionBackend(artifact_root=artifact_root)
+    raise ValueError(f'Unsupported execution backend: {settings.execution_backend}')
+
+
+
 def build_service(
     settings: Settings | None = None,
     *,
     llm_backend: LLMBackend | None = None,
     coding_agent_backend: CodingAgentBackend | None = None,
+    execution_backend: ExecutionBackend | None = None,
 ) -> BearService:
     settings = settings or Settings()
     repository = MarkdownRepository(settings.state_root)
@@ -432,7 +477,7 @@ def build_service(
             defaults=settings.default_permissions,
             context_overrides=settings.context_permissions,
         ),
-        execution_backend=LocalExecutionBackend(),
+        execution_backend=execution_backend or build_execution_backend(settings),
         llm_backend=llm_backend or build_llm_backend(settings),
         coding_agent_backend=coding_agent_backend or build_coding_agent_backend(settings),
     )

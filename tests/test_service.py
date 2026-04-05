@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from bear.config.settings import Settings
-from bear.domain.enums import PermissionLevel
+from bear.domain.enums import ExecutionBackendKind, ExperimentStatus, PermissionLevel
 from bear.runtime.service import build_service
 
 
@@ -100,3 +100,40 @@ def test_provider_wiring_uses_selected_backends(tmp_path: Path) -> None:
     assert result.analysis.startswith('claude_api offline synthesis:')
     assert result.suggested_next_step.startswith('claude_code offline patch plan:')
     assert execution.plan_id == plan.id
+
+
+
+def test_backend_selection_and_lifecycle_controls(tmp_path: Path) -> None:
+    artifact_root = tmp_path / 'artifacts'
+    service = build_service(
+        Settings(
+            state_root=tmp_path / 'state',
+            artifact_root=artifact_root,
+            execution_backend='slurm',
+        )
+    )
+
+    project = service.create_project('Project E', 'Research project')
+    idea = service.create_idea(project.id, 'Idea', 'Problem', 'Motivation')
+    hypothesis = service.create_hypothesis(project.id, idea.id, 'Statement', 'Rationale', 'Signal')
+    plan = service.plan_experiment(project.id, hypothesis.id, 'Backend Plan', 'Wire execution backend')
+    approval = service.request_plan_execution(plan.id, dry_run=False)
+    assert approval is not None
+    _ = service.approve_request(approval.id)
+
+    execution, _ = service.run_plan(plan.id, dry_run=False)
+    polled = service.poll_execution_status(execution.id)
+    logs = service.fetch_execution_logs(execution.id)
+    cancelled = service.cancel_execution(execution.id)
+    artifacts = service.list_artifacts()
+
+    assert service.execution_backend.target.kind == ExecutionBackendKind.SLURM
+    assert plan.target.kind == ExecutionBackendKind.SLURM
+    assert polled.id == execution.id
+    assert logs[-1] == 'execution submitted'
+    assert cancelled.status == ExperimentStatus.CANCELLED
+    assert cancelled.logs[-1] == 'execution cancelled'
+    assert len(artifacts) == 1
+    assert artifacts[0].path.startswith(str(artifact_root))
+    assert artifacts[0].metadata['target'] == 'slurm'
+    assert Path(artifacts[0].path).exists()
